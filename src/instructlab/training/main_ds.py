@@ -94,7 +94,7 @@ def setup_model(args, tokenizer, train_loader, grad_accum):
             bnb_4bit_compute_dtype=torch.float16,  # if not set will throw a warning about slow speeds when training
         )
 
-    if args.is_granite:
+    if args.is_padding_free:
         with ensure_loadable_granite_checkpoint(args.model_name_or_path) as path:
             model = GPTDolomiteForCausalLM.from_pretrained(
                 path,
@@ -156,7 +156,7 @@ def setup_model(args, tokenizer, train_loader, grad_accum):
         "GemmaForCausalLM",
     ], f"Model class name: {model.__class__.__name__} is not supported."
 
-    model = convert_loss_to_reduce_sum(model, is_granite=args.is_granite)
+    model = convert_loss_to_reduce_sum(model, is_padding_free=args.is_padding_free)
     model = add_noisy_embeddings(model, noise_alpha=args.NEFTune_alpha)
 
     # handling of gradient checkpointing
@@ -185,7 +185,7 @@ def setup_model(args, tokenizer, train_loader, grad_accum):
             target_modules=args.lora_target_modules,
         )
         model = prepare_peft_model(
-            model, peft_config, gradient_checkpointing=not args.is_granite
+            model, peft_config, gradient_checkpointing=not args.is_padding_free
         )
 
         # patch DS to work with quantized models
@@ -200,12 +200,12 @@ def setup_model(args, tokenizer, train_loader, grad_accum):
                 "deepspeed.DeepSpeedEngine",
                 partial(DeepSpeedEngine, dont_change_device=True),
             )
-    elif not args.is_granite:
+    elif not args.is_padding_free:
         model.gradient_checkpointing_enable()
 
     # granite gradient checkpointing is handled uniformly
     # for both lora and full here
-    if args.is_granite:
+    if args.is_padding_free:
         block_name = model._no_split_modules[0]
         apply_gradient_checkpointing(
             model,
@@ -358,7 +358,7 @@ def train(args, model, tokenizer, train_loader, grad_accum, metric_logger):
             start = time.time()
             aggregated_values[0] = batch.pop("num_loss_counted_tokens")
             aggregated_values[1] = len(batch["input_ids"])
-            if not args.is_granite:
+            if not args.is_padding_free:
                 for k in batch:
                     batch[k] = batch[k].to(local_rank)
 
@@ -482,7 +482,7 @@ def main(args):
         avg_sample_len=dataset.get_lengths().mean(),
         effective_batch_size=args.effective_batch_size,
         max_batch_len_per_gpu=args.max_batch_len,
-        is_padding=not args.is_granite,
+        is_padding=not args.is_padding_free,
         dataset=dataset,
         pad_id=tokenizer.pad_token_id,
         seed=args.seed,
@@ -495,7 +495,7 @@ def main(args):
         dataset,
         tokenizer.pad_token_id,
         num_workers=8,
-        is_granite=args.is_granite,
+        is_padding_free=args.is_padding_free,
         max_batch_len=args.max_batch_len,
         packing_max_batch_len=packing_max_batch_len,
         seed=args.seed,
@@ -579,7 +579,7 @@ def run_training(torch_args: TorchrunArgs, train_args: TrainingArgs):
             command.append(f"--mock_len={train_args.mock_len}")
 
     if train_args.is_padding_free:
-        command.append("--is_granite")
+        command.append("--is_padding_free")
 
     if train_args.lora:
         command.extend(
@@ -655,7 +655,7 @@ if __name__ == "__main__":
         default="FULL_SHARD",
         help="Sharding strategy to be used for distributed training.",
     )
-    parser.add_argument("--is_granite", action="store_true")
+    parser.add_argument("--is_padding_free", action="store_true")
     parser.add_argument("--lora_r", type=int, default=0)  # set to > 0 to activate lora
     parser.add_argument("--lora_alpha", type=int, default=32)
     parser.add_argument("--lora_dropout", type=float, default=0.1)
@@ -720,7 +720,7 @@ torchrun --nnodes=$WORLD_SIZE --node_rank=$RANK \
 --save_samples=250000 \
 --log_level="INFO" \
 --sharding_strategy="HYBRID_SHARD" \
---is_granite \
+--is_padding_free \
 --max_batch_len 70000 \
 --seed=42
 """

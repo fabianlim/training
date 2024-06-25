@@ -88,7 +88,7 @@ def simulate_buckets(
         (base_avg + addition) * ((goal / num_gpus) / grad_accum)
     )
 
-    collate_fn = make_collate_fn(pad_id, is_granite=False, max_batch_len=max_batch_len)
+    collate_fn = make_collate_fn(pad_id, is_padding_free=False, max_batch_len=max_batch_len)
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
 

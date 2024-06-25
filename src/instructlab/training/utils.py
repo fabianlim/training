@@ -104,9 +104,9 @@ class StreamablePopen(subprocess.Popen):
                 break
 
 
-def make_collate_fn(pad_token_id, is_granite=False, max_batch_len=60000):
+def make_collate_fn(pad_token_id, is_padding_free=False, max_batch_len=60000):
     rank = int(os.environ["RANK"])
-    if is_granite:
+    if is_padding_free:
 
         def pad_collate_fn(batch):
             lens = np.array([len(item["input_ids"]) for item in batch])
@@ -192,11 +192,11 @@ def make_collate_fn(pad_token_id, is_granite=False, max_batch_len=60000):
     return pad_collate_fn
 
 
-def convert_loss_to_reduce_sum(model, is_granite=False):
+def convert_loss_to_reduce_sum(model, is_padding_free=False):
     """
     this is necessary because multipack changes the samples per gpu, which biases the gradients to be larger for batches with less samples but longer lengths.
     """
-    if is_granite:
+    if is_padding_free:
 
         def get_autoregressive_language_modeling_loss(
             lm_logits: torch.Tensor,
@@ -626,7 +626,7 @@ def save_hf_format_ds(args, model, tokenizer, samples_seen, convert_granite=True
     start = time.time()
     # used to save huggingface format, so we can use it for hf.from_pretrained
     CONFIG_NAME = "config.json"
-    if args.is_granite:
+    if args.is_padding_free:
         # save if in a temp directory first then convert it
         WEIGHTS_NAME = "model.safetensors"
         MODEL_TYPE = "llama"
@@ -639,7 +639,7 @@ def save_hf_format_ds(args, model, tokenizer, samples_seen, convert_granite=True
         output_model_file = output_dir / WEIGHTS_NAME
         output_config_file = output_dir / CONFIG_NAME
 
-        if args.is_granite and convert_granite:
+        if args.is_padding_free and convert_granite:
             with TemporaryDirectory("w") as tmpdir:
                 save_file(model_state, Path(tmpdir) / WEIGHTS_NAME)
                 model_to_save.config.to_json_file(Path(tmpdir) / CONFIG_NAME)
