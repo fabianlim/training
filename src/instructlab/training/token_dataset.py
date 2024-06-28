@@ -3,7 +3,7 @@ import os
 
 # Third Party
 from datasets import load_dataset
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, DistributedSampler
 import numpy as np
 import torch
 
@@ -107,9 +107,6 @@ def setup_dataloader(
         )
         sampler = {"batch_sampler": sampler}
     elif sampler == "distributed":
-        # Third Party
-        from torch.utils.data import DistributedSampler
-
         sampler = (
             DistributedSampler(dataset) if torch.distributed.is_initialized() else None
         )
