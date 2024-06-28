@@ -4,6 +4,7 @@ from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, List, Optional
+import hashlib
 import importlib
 import inspect
 import logging
@@ -485,9 +486,15 @@ def prepare_universal_checkpoint_from_latest(output_dir):
 def ensure_loadable_granite_checkpoint(
     model_name_or_path: str,
     tmpdir: str,
+    clear_cache: bool = False,
 ):
     local_rank = int(os.environ["LOCAL_RANK"])
     group_rank = int(os.environ["GROUP_RANK"])
+
+    def hash(x: str, len: int = 10):
+        h = hashlib.md5()
+        h.update(x.encode())
+        return h.hexdigest()[:len]
 
     try:
         GPTDolomiteConfig.from_pretrained(model_name_or_path)
@@ -504,13 +511,16 @@ def ensure_loadable_granite_checkpoint(
         # so now we use a provided tmpdir
         # Assumption: tmpdir should be accessible by all ranks, even those
         # in different nodes
-        tmpdir = Path(tmpdir) / f"tmp.{group_rank}"
-        if os.path.exists(tmpdir) and (not dist.is_initialized() or local_rank == 0):
-            # need to delete if it exists because import doesnt like it to
-            shutil.rmtree(tmpdir, ignore_errors=True)
+        tmpdir = Path(tmpdir) / f"{hash(tmpdir)}.{group_rank}"
 
         if not dist.is_initialized() or local_rank == 0:
-            import_from_huggingface(model_name_or_path, tmpdir)
+            if os.path.exists(tmpdir) and clear_cache:
+                # need to delete if it exists because import doesnt like it to
+                shutil.rmtree(tmpdir, ignore_errors=True)
+
+            if not os.path.exists(tmpdir):
+                # if the path does not exist then we need to get the checkpoint
+                import_from_huggingface(model_name_or_path, tmpdir)
 
         if dist.is_initialized():
             # the first barrier is to wait for local rank 0 to finish converting the model
@@ -524,7 +534,7 @@ def ensure_loadable_granite_checkpoint(
             # the second barrier is to wait for all the models to finish loading
             dist.barrier()
 
-        if not dist.is_initialized() or local_rank == 0:
+        if clear_cache and (not dist.is_initialized() or local_rank == 0):
             # at this point, we can be confident that the tmpdir is no longer needed
             shutil.rmtree(tmpdir, ignore_errors=True)
 
